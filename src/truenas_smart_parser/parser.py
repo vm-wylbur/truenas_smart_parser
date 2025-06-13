@@ -21,6 +21,7 @@
 
 import json
 import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -28,6 +29,7 @@ from pathlib import Path
 from typing import Final
 
 import polars as pl
+from loguru import logger
 
 # SMART attribute IDs we care about for ATA drives
 ATTR_RAW_READ_ERROR_RATE: Final[int] = 1
@@ -49,6 +51,7 @@ class DriveHealth:
     # Temperature metrics
     temperature_current: float | None
     temperature_max_24h: float | None
+    temperature_mean_24h: float | None
     temperature_warning: float | None = None  # Warning threshold
     temperature_critical: float | None = None  # Critical threshold
     temperature_operational_max: float | None = None  # ATA operational limit
@@ -86,6 +89,7 @@ class DriveHealth:
             'temperature': {
                 'current': self.temperature_current,
                 'max_24h': self.temperature_max_24h,
+                'mean_24h': self.temperature_mean_24h,
                 'warning': self.temperature_warning,
                 'critical': self.temperature_critical,
                 'operational_max': self.temperature_operational_max,
@@ -238,7 +242,8 @@ def analyze_ata_health(df: pl.DataFrame, serial: str,
             drive_type='ata',
             serial=serial,
             temperature_current=None,
-            temperature_max_24h=None
+            temperature_max_24h=None,
+            temperature_mean_24h=None
         )
 
     # Get latest values
@@ -259,6 +264,7 @@ def analyze_ata_health(df: pl.DataFrame, serial: str,
         temp_current = None
     
     temp_max_24h = None
+    temp_mean_24h = None
     if (not df_24h.is_empty() and
         f'attr_{ATTR_TEMPERATURE_CELSIUS}_raw' in df_24h.columns):
         # Get all temperature values and decode them
@@ -266,6 +272,7 @@ def analyze_ata_health(df: pl.DataFrame, serial: str,
         decoded_temps = [t & 0xFF for t in temp_values if t is not None]
         if decoded_temps:
             temp_max_24h = max(decoded_temps)
+            temp_mean_24h = sum(decoded_temps) / len(decoded_temps)
 
     # Error analysis - get latest values
     reallocated_total = latest.get(f'attr_{ATTR_REALLOCATED_SECTOR_CT}_raw', 0)
@@ -329,6 +336,9 @@ def analyze_ata_health(df: pl.DataFrame, serial: str,
         temperature_max_24h=(
             float(temp_max_24h) if temp_max_24h is not None else None
         ),
+        temperature_mean_24h=(
+            float(temp_mean_24h) if temp_mean_24h is not None else None
+        ),
         temperature_warning=temp_warning,
         temperature_critical=temp_critical,
         temperature_operational_max=temp_operational,
@@ -357,7 +367,8 @@ def analyze_nvme_health(df: pl.DataFrame, serial: str,
             drive_type='nvme',
             serial=serial,
             temperature_current=None,
-            temperature_max_24h=None
+            temperature_max_24h=None,
+            temperature_mean_24h=None
         )
 
     # Get latest values
@@ -371,8 +382,10 @@ def analyze_nvme_health(df: pl.DataFrame, serial: str,
     # Temperature analysis
     temp_current = latest.get('temperature')
     temp_max_24h = None
+    temp_mean_24h = None
     if not df_24h.is_empty() and 'temperature' in df_24h.columns:
         temp_max_24h = df_24h['temperature'].max()
+        temp_mean_24h = df_24h['temperature'].mean()
 
     # Error analysis
     media_errors_total = latest.get('media_and_data_integrity_errors', 0)
@@ -404,6 +417,9 @@ def analyze_nvme_health(df: pl.DataFrame, serial: str,
         ),
         temperature_max_24h=(
             float(temp_max_24h) if temp_max_24h is not None else None
+        ),
+        temperature_mean_24h=(
+            float(temp_mean_24h) if temp_mean_24h is not None else None
         ),
         temperature_warning=temp_warning,
         temperature_critical=temp_critical,
@@ -574,32 +590,68 @@ def auto_discover_device_mapping(ssh_command: Callable) -> dict[str, str]:
     Returns:
         Dict mapping serial numbers to device paths
         e.g., {"1RJE48WM": "/dev/sda", ...}
+    
+    Note:
+        This function can fail silently if SSH authentication fails in
+        subprocess context (e.g., missing SSH agent, different user context).
+        SSH commands that work interactively may fail when called from
+        Python subprocess due to publickey authentication issues.
+        When SSH fails, returns empty dict and caller falls back to
+        unknown_ device paths, which is expected behavior.
     """
     device_mapping = {}
     
+    logger.info("Starting auto-discovery of device mappings...")
+    
     try:
+        logger.debug("Running: smartctl --scan")
         scan_output = ssh_command("smartctl --scan")
+        logger.debug(f"Scan output: {repr(scan_output)}")
         
-        for line in scan_output.strip().split('\n'):
+        if not scan_output.strip():
+            logger.warning("No output from smartctl --scan")
+            return device_mapping
+        
+        lines = scan_output.strip().split('\n')
+        logger.info(f"Found {len(lines)} lines from smartctl --scan")
+        
+        for i, line in enumerate(lines):
             if not line:
+                logger.debug(f"Line {i}: empty, skipping")
                 continue
             
+            logger.debug(f"Line {i}: {repr(line)}")
             parts = line.split()
+            if len(parts) < 1:
+                logger.warning(f"Line {i}: invalid format, skipping")
+                continue
+                
             device = parts[0]
+            logger.debug(f"Processing device: {device}")
             
             # Get serial number
-            info = ssh_command(
-                f"smartctl -i {device} | grep 'Serial Number' | "
-                f"awk '{{print $3}}'"
-            )
+            serial_cmd = (f"smartctl -i {device} | grep 'Serial Number' | "
+                         f"awk '{{print $3}}'")
+            logger.debug(f"Running: {serial_cmd}")
+            
+            info = ssh_command(serial_cmd)
             serial = info.strip()
+            
+            logger.debug(f"Device {device} serial output: {repr(info)}")
+            logger.debug(f"Device {device} parsed serial: {repr(serial)}")
             
             if serial:
                 device_mapping[serial] = device
+                logger.info(f"Mapped {serial} -> {device}")
+            else:
+                logger.warning(f"No serial found for device {device}")
         
-    except Exception:
-        # Return empty mapping if discovery fails
-        pass
+        logger.info(f"Auto-discovery completed: {len(device_mapping)} devices mapped")
+        logger.debug(f"Final mapping: {device_mapping}")
+        
+    except Exception as e:
+        logger.error(f"Auto-discovery failed with exception: {e}")
+        logger.debug("Exception details:", exc_info=True)
     
     return device_mapping
 
@@ -650,32 +702,60 @@ def _extract_drive_info(
 
 def analyze_smart_directory(smart_dir: str | Path,
                           device_mapping: dict[str, str] | None = None,
-                          ssh_command: Callable | None = None,
-                          auto_discover_devices: bool = False) -> SystemHealth:
-    """Analyze all SMART CSV files in a directory.
+                          auto_discover_devices: bool = False,
+                          verbose: bool = False) -> SystemHealth:
+    """Analyze all SMART CSV files in a local directory.
     
     Args:
         smart_dir: Directory containing SMART CSV files (e.g., /var/lib/smartmontools/)
         device_mapping: Optional mapping of serial numbers to device paths
                        e.g., {"1RJE48WM": "/dev/sda", ...}
-        ssh_command: Optional function to execute commands via SSH for threshold queries
-        auto_discover_devices: If True and ssh_command is provided, automatically
-                              discover device mapping using smartctl --scan
+        auto_discover_devices: If True, automatically discover device mapping
+                              using local smartctl --scan commands
+        verbose: If True, enable detailed logging output
     
     Returns:
         SystemHealth object with all drives and aggregate metrics
+        
+    Note:
+        This function is for local analysis only. For remote analysis,
+        use analyze_smart_remote() instead.
     """
     smart_dir = Path(smart_dir)
     if not smart_dir.is_dir():
         raise ValueError(f"Not a directory: {smart_dir}")
 
+    # Configure logging based on verbose flag
+    if not verbose:
+        logger.disable("truenas_smart_parser")
+
     # Auto-discover device mapping if requested
-    if auto_discover_devices and ssh_command and not device_mapping:
-        device_mapping = auto_discover_device_mapping(ssh_command)
+    logger.debug(f"auto_discover_devices={auto_discover_devices}, device_mapping={device_mapping}")
+    if auto_discover_devices and not device_mapping:
+        logger.info("Auto-discovery conditions met, discovering local devices")
+        
+        def local_exec(command: str) -> str:
+            """Execute command locally"""
+            result = subprocess.run(
+                command.split(),
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            return result.stdout
+        
+        device_mapping = auto_discover_device_mapping(local_exec)
+        logger.info(f"Local auto-discovery returned {len(device_mapping or {})} mappings")
+    elif not auto_discover_devices:
+        logger.debug("Auto-discovery disabled")
+    elif device_mapping:
+        logger.debug(f"Device mapping already provided with {len(device_mapping)} entries")
 
     # Find all CSV files
     csv_files = list(smart_dir.glob("attrlog.*.csv"))
     if not csv_files:
+        if not verbose:
+            logger.enable("truenas_smart_parser")
         return SystemHealth(
             drives=[],
             total_drives=0,
@@ -696,26 +776,33 @@ def analyze_smart_directory(smart_dir: str | Path,
 
     drives = []
     device_mapping = device_mapping or {}
+    logger.info(f"Processing {len(csv_files)} CSV files with device mapping: {device_mapping}")
 
     for csv_file in csv_files:
         try:
             # Extract info from filename
             serial, model, drive_type = _extract_drive_info(csv_file.name)
+            logger.debug(f"CSV file {csv_file.name}: serial={serial}, model={model}, type={drive_type}")
 
             # Get device path from mapping or generate one
             device_path = device_mapping.get(serial, f"/dev/unknown_{serial[:8]}")
+            if serial in device_mapping:
+                logger.info(f"Mapped {serial} -> {device_path} (from device mapping)")
+            else:
+                logger.warning(f"No mapping for {serial}, using fallback: {device_path}")
+                logger.debug(f"Available mappings: {list(device_mapping.keys())}")
 
             # Parse CSV and analyze
             df = parse_smart_csv(csv_file, drive_type)
 
-            # Query temperature thresholds if we have device path and SSH
+            # Query temperature thresholds if we have valid device path (local commands)
             thresholds = None
-            if device_path != f"/dev/unknown_{serial[:8]}" and ssh_command:
+            if device_path != f"/dev/unknown_{serial[:8]}":
                 try:
                     if drive_type == 'ata':
-                        thresholds = query_ata_thresholds(device_path, ssh_command)
+                        thresholds = query_ata_thresholds(device_path)
                     else:
-                        thresholds = query_nvme_thresholds(device_path, ssh_command)
+                        thresholds = query_nvme_thresholds(device_path)
                 except Exception:
                     pass  # Use defaults if query fails
 
@@ -732,6 +819,8 @@ def analyze_smart_directory(smart_dir: str | Path,
             continue
 
     if not drives:
+        if not verbose:
+            logger.enable("truenas_smart_parser")
         return SystemHealth(
             drives=[],
             total_drives=0,
@@ -826,3 +915,161 @@ def analyze_smart_directory(smart_dir: str | Path,
         ata_drives=ata_count,
         last_updated=datetime.now()
     )
+    
+    # Re-enable logging
+    if not verbose:
+        logger.enable("truenas_smart_parser")
+
+
+def _ssh_exec_factory(host: str, ssh_options: list[str] | None = None):
+    """Create an SSH command executor for a specific host.
+    
+    Args:
+        host: SSH hostname
+        ssh_options: Additional SSH options (e.g., ["-i", "/path/to/key"])
+    """
+    ssh_options = ssh_options or []
+    
+    def ssh_exec(command: str) -> str:
+        ssh_cmd = ["ssh"] + ssh_options + [host, command]
+        result = subprocess.run(
+            ssh_cmd,
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        return result.stdout
+    return ssh_exec
+
+
+def analyze_smart_remote(
+    host: str,
+    smart_dir: str = "/var/lib/smartmontools/",
+    device_mapping: dict[str, str] | None = None,
+    ssh_options: list[str] | None = None,
+    auto_discover_devices: bool = True,
+    verbose: bool = False
+) -> SystemHealth:
+    """Analyze SMART data from a remote host via SSH.
+    
+    Args:
+        host: SSH hostname to connect to
+        smart_dir: Directory containing SMART CSV files on remote host
+        device_mapping: Optional mapping of serial numbers to device paths
+                       e.g., {"1RJE48WM": "/dev/sda", ...}
+        ssh_options: Additional SSH options (e.g., ["-i", "/path/to/key"])
+        auto_discover_devices: If True, automatically discover device mapping
+                              using smartctl --scan on the remote host
+        verbose: If True, enable detailed logging output
+    
+    Returns:
+        SystemHealth object with all drives and aggregate metrics
+        
+    Note:
+        This function copies CSV files from the remote host to a temporary
+        directory and performs all analysis locally. Device auto-discovery
+        runs on the remote host to ensure CSV files and device mappings
+        come from the same system.
+    """
+    # Configure logging based on verbose flag
+    if not verbose:
+        logger.disable("truenas_smart_parser")
+    
+    logger.info(f"Starting remote analysis of {host}:{smart_dir}")
+    
+    # Create SSH executor
+    ssh_exec = _ssh_exec_factory(host, ssh_options)
+    
+    # Auto-discover device mapping if requested and not provided
+    if auto_discover_devices and not device_mapping:
+        logger.info("Auto-discovering device mappings on remote host...")
+        device_mapping = auto_discover_device_mapping(ssh_exec)
+    
+    # Create temporary directory for CSV files
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmppath = Path(tmpdir)
+        logger.debug(f"Using temporary directory: {tmppath}")
+        
+        # List CSV files on remote host
+        logger.info("Listing remote CSV files...")
+        ls_cmd = ["ssh"] + (ssh_options or []) + [host, f"ls -1 {smart_dir}/attrlog.*.csv 2>/dev/null"]
+        ls_result = subprocess.run(
+            ls_cmd,
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        
+        if ls_result.returncode != 0:
+            logger.error(f"Failed to list files in {smart_dir} on {host}")
+            logger.error(f"Command: {' '.join(ls_cmd)}")
+            logger.error(f"Error: {ls_result.stderr}")
+            raise RuntimeError(f"Failed to list CSV files on {host}")
+        
+        csv_files = ls_result.stdout.strip().split('\n')
+        csv_files = [f for f in csv_files if f]  # Remove empty strings
+        
+        if not csv_files:
+            logger.warning(f"No SMART CSV files found in {smart_dir} on {host}")
+            return SystemHealth(
+                drives=[],
+                total_drives=0,
+                healthy_drives=0,
+                warning_drives=0,
+                critical_drives=0,
+                total_errors_24h=0,
+                max_temperature=0.0,
+                total_reallocated_sectors=0,
+                total_pending_sectors=0,
+                total_media_errors=0,
+                oldest_drive_hours=0,
+                newest_drive_hours=0,
+                nvme_drives=0,
+                ata_drives=0,
+                last_updated=datetime.now()
+            )
+        
+        logger.info(f"Found {len(csv_files)} CSV files, copying to local temp...")
+        
+        # Copy each CSV file
+        copied_files = 0
+        for csv_file in csv_files:
+            filename = Path(csv_file).name
+            local_file = tmppath / filename
+            
+            # Use scp to copy file
+            scp_cmd = ["scp"] + (ssh_options or []) + [f"{host}:{csv_file}", str(local_file)]
+            scp_result = subprocess.run(
+                scp_cmd,
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            
+            if scp_result.returncode != 0:
+                logger.warning(f"Failed to copy {filename}: {scp_result.stderr}")
+                continue
+            
+            logger.debug(f"Copied {filename}")
+            copied_files += 1
+        
+        if copied_files == 0:
+            logger.error("Failed to copy any CSV files")
+            raise RuntimeError("No CSV files could be copied from remote host")
+        
+        logger.info(f"Successfully copied {copied_files} CSV files")
+        
+        # Now analyze the local copies (CSV files and device mapping from same host)
+        logger.info("Analyzing copied CSV files...")
+        result = analyze_smart_directory(
+            tmppath,
+            device_mapping=device_mapping,
+            auto_discover_devices=False,  # Already discovered above
+            verbose=verbose  # Pass through verbose flag
+        )
+        
+    # Re-enable logging
+    if not verbose:
+        logger.enable("truenas_smart_parser")
+        
+    return result

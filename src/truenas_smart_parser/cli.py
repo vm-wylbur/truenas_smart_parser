@@ -30,16 +30,24 @@ from loguru import logger
 from rich.console import Console
 
 from .display import display_system_health
-from .parser import analyze_smart_directory
+from .parser import analyze_smart_directory, analyze_smart_remote
 
 app = typer.Typer()
 
 
-def ssh_exec_factory(host: str):
-    """Create an SSH command executor for a specific host."""
+def ssh_exec_factory(host: str, ssh_options: list[str] | None = None):
+    """Create an SSH command executor for a specific host.
+    
+    Args:
+        host: SSH hostname
+        ssh_options: Additional SSH options (e.g., ["-i", "/path/to/key"])
+    """
+    ssh_options = ssh_options or []
+    
     def ssh_exec(command: str) -> str:
+        ssh_cmd = ["ssh"] + ssh_options + [host, command]
         result = subprocess.run(
-            ["ssh", host, command],
+            ssh_cmd,
             capture_output=True,
             text=True,
             check=False
@@ -58,11 +66,6 @@ def analyze(
         None,
         "--device-map",
         help="JSON file mapping serial numbers to device paths"
-    ),
-    ssh_host: str | None = typer.Option(
-        None,
-        "--ssh-host",
-        help="SSH host for querying live temperature thresholds"
     ),
     json_output: bool = typer.Option(
         False,
@@ -89,23 +92,17 @@ def analyze(
     
     try:
         # Load device mapping if provided
-        device_mapping = {}
+        device_mapping = None
         if device_map and device_map.exists():
             with open(device_map) as f:
                 device_mapping = json.load(f)
 
-        # Create SSH command function if host provided
-        ssh_command = None
-        if ssh_host:
-            ssh_command = ssh_exec_factory(ssh_host)
-            logger.info(f"Using SSH host {ssh_host} for threshold queries")
-
-        # Analyze drives
-        logger.info(f"Analyzing SMART data in {smart_dir}")
+        # Analyze local drives
+        logger.info(f"Analyzing local SMART data in {smart_dir}")
         system_health = analyze_smart_directory(
             smart_dir,
             device_mapping=device_mapping,
-            ssh_command=ssh_command
+            auto_discover_devices=(device_mapping is None)
         )
 
         if json_output:
@@ -134,6 +131,11 @@ def analyze_remote(
         "--device-map",
         help="JSON file mapping serial numbers to device paths"
     ),
+    ssh_options: str | None = typer.Option(
+        None,
+        "--ssh-options",
+        help="Additional SSH options (e.g., '-i /path/to/key -o StrictHostKeyChecking=no')"
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -158,87 +160,34 @@ def analyze_remote(
         logger.add(lambda _: None)  # Suppress all logging
     
     try:
-        import tempfile
-
-        # Create SSH executor
-        ssh_exec = ssh_exec_factory(host)
-        logger.info(f"Connecting to {host} to analyze {smart_dir}")
-
         # Load device mapping if provided
         device_mapping = None
         if device_map and device_map.exists():
             logger.info(f"Loading device mapping from {device_map}")
             with open(device_map) as f:
                 device_mapping = json.load(f)
+
+        # Parse SSH options
+        parsed_ssh_options = ssh_options.split() if ssh_options else None
+
+        # Use the new analyze_smart_remote function
+        logger.info(f"Analyzing remote SMART data on {host}:{smart_dir}")
+        system_health = analyze_smart_remote(
+            host=host,
+            smart_dir=smart_dir,
+            device_mapping=device_mapping,
+            ssh_options=parsed_ssh_options,
+            auto_discover_devices=(device_mapping is None)
+        )
+
+        if json_output:
+            # Convert to JSON-serializable format
+            output = system_health.to_dict()
+            typer.echo(json.dumps(output, indent=2))
         else:
-            logger.info("No device mapping provided, will auto-discover...")
-
-        # Create temporary directory for CSV files
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmppath = Path(tmpdir)
-
-            # List CSV files on remote host
-            logger.info("Listing remote CSV files...")
-            ls_result = subprocess.run(
-                ["ssh", host, f"ls -1 {smart_dir}/attrlog.*.csv 2>/dev/null"],
-                capture_output=True,
-                text=True,
-                check=False
-            )
-
-            if ls_result.returncode != 0:
-                logger.error(f"Failed to list files in {smart_dir} on {host}")
-                raise typer.Exit(1)
-
-            csv_files = ls_result.stdout.strip().split('\n')
-            csv_files = [f for f in csv_files if f]  # Remove empty strings
-
-            if not csv_files:
-                logger.error(
-                    f"No SMART CSV files found in {smart_dir} on {host}"
-                )
-                raise typer.Exit(1)
-
-            logger.info(f"Found {len(csv_files)} CSV files, copying...")
-
-            # Copy each CSV file
-            for csv_file in csv_files:
-                filename = Path(csv_file).name
-                local_file = tmppath / filename
-
-                # Use scp to copy file
-                scp_result = subprocess.run(
-                    ["scp", f"{host}:{csv_file}", str(local_file)],
-                    capture_output=True,
-                    text=True,
-                    check=False
-                )
-
-                if scp_result.returncode != 0:
-                    logger.warning(
-                        f"Failed to copy {filename}: {scp_result.stderr}"
-                    )
-                    continue
-
-                logger.debug(f"Copied {filename}")
-
-            # Now analyze the local copies with SSH threshold queries
-            logger.info("Analyzing SMART data...")
-            system_health = analyze_smart_directory(
-                tmppath,
-                device_mapping=device_mapping,
-                ssh_command=ssh_exec,  # Still use SSH for threshold queries
-                auto_discover_devices=(device_mapping is None)
-            )
-
-            if json_output:
-                # Convert to JSON-serializable format
-                output = system_health.to_dict()
-                typer.echo(json.dumps(output, indent=2))
-            else:
-                # Rich tabular display
-                console = Console()
-                display_system_health(system_health, console, compact=not wide)
+            # Rich tabular display
+            console = Console()
+            display_system_health(system_health, console, compact=not wide)
 
     except Exception as e:
         logger.error(f"Remote analysis failed: {e}")
