@@ -92,34 +92,7 @@ def analyze(
 
         if json_output:
             # Convert to JSON-serializable format
-            output = {
-                "summary": {
-                    "total_drives": system_health.total_drives,
-                    "healthy_drives": system_health.healthy_drives,
-                    "warning_drives": system_health.warning_drives,
-                    "critical_drives": system_health.critical_drives,
-                    "max_temperature": system_health.max_temperature,
-                    "total_errors_24h": system_health.total_errors_24h,
-                },
-                "drives": [
-                    {
-                        "device_path": d.device_path,
-                        "serial": d.serial,
-                        "type": d.drive_type,
-                        "temperature_current": d.temperature_current,
-                        "temperature_max_24h": d.temperature_max_24h,
-                        "temperature_warning": d.temperature_warning,
-                        "temperature_critical": d.temperature_critical,
-                        "errors_24h": (
-                            d.reallocated_sectors_24h +
-                            d.pending_sectors_24h +
-                            d.media_errors_24h
-                        ),
-                        "power_on_hours": d.power_on_hours,
-                    }
-                    for d in system_health.drives
-                ],
-            }
+            output = system_health.to_dict()
             typer.echo(json.dumps(output, indent=2))
         else:
             # Human-readable output
@@ -141,7 +114,8 @@ def analyze(
                     temp_check = ""
                     if (drive.temperature_current and
                         drive.temperature_critical and
-                        drive.temperature_current >= drive.temperature_critical):
+                        drive.temperature_current >=
+                        drive.temperature_critical):
                         temp_check = (
                             f" (≥{drive.temperature_critical}°C threshold)"
                         )
@@ -160,6 +134,144 @@ def analyze(
 
     except Exception as e:
         logger.error(f"Analysis failed: {e}")
+        raise typer.Exit(1)
+
+
+@app.command("analyze-remote")
+def analyze_remote(
+    host: str = typer.Argument(..., help="SSH host to connect to"),
+    smart_dir: str = typer.Argument(
+        "/var/lib/smartmontools/",
+        help="Directory containing SMART CSV files on remote host"
+    ),
+    device_map: Path | None = typer.Option(
+        None,
+        "--device-map",
+        help="JSON file mapping serial numbers to device paths"
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Output results as JSON"
+    ),
+):
+    """Analyze SMART data from a remote TrueNAS host via SSH."""
+    try:
+        import tempfile
+
+        # Create SSH executor
+        ssh_exec = ssh_exec_factory(host)
+        logger.info(f"Connecting to {host} to analyze {smart_dir}")
+
+        # Load device mapping if provided
+        device_mapping = {}
+        if device_map and device_map.exists():
+            with open(device_map) as f:
+                device_mapping = json.load(f)
+
+        # Create temporary directory for CSV files
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+
+            # List CSV files on remote host
+            logger.info("Listing remote CSV files...")
+            ls_result = subprocess.run(
+                ["ssh", host, f"ls -1 {smart_dir}/attrlog.*.csv 2>/dev/null"],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+
+            if ls_result.returncode != 0:
+                logger.error(f"Failed to list files in {smart_dir} on {host}")
+                raise typer.Exit(1)
+
+            csv_files = ls_result.stdout.strip().split('\n')
+            csv_files = [f for f in csv_files if f]  # Remove empty strings
+
+            if not csv_files:
+                logger.error(
+                    f"No SMART CSV files found in {smart_dir} on {host}"
+                )
+                raise typer.Exit(1)
+
+            logger.info(f"Found {len(csv_files)} CSV files, copying...")
+
+            # Copy each CSV file
+            for csv_file in csv_files:
+                filename = Path(csv_file).name
+                local_file = tmppath / filename
+
+                # Use scp to copy file
+                scp_result = subprocess.run(
+                    ["scp", f"{host}:{csv_file}", str(local_file)],
+                    capture_output=True,
+                    text=True,
+                    check=False
+                )
+
+                if scp_result.returncode != 0:
+                    logger.warning(
+                        f"Failed to copy {filename}: {scp_result.stderr}"
+                    )
+                    continue
+
+                logger.debug(f"Copied {filename}")
+
+            # Now analyze the local copies with SSH threshold queries
+            logger.info("Analyzing SMART data...")
+            system_health = analyze_smart_directory(
+                tmppath,
+                device_mapping=device_mapping,
+                ssh_command=ssh_exec  # Still use SSH for threshold queries
+            )
+
+            if json_output:
+                # Convert to JSON-serializable format
+                output = system_health.to_dict()
+                typer.echo(json.dumps(output, indent=2))
+            else:
+                # Human-readable output (reuse the same formatting)
+                typer.echo("System Health Summary")
+                typer.echo("=" * 50)
+                typer.echo(f"Total drives: {system_health.total_drives}")
+                typer.echo(f"  ✅ Healthy: {system_health.healthy_drives}")
+                typer.echo(f"  ⚠️  Warning: {system_health.warning_drives}")
+                typer.echo(f"  ❌ Critical: {system_health.critical_drives}")
+                typer.echo()
+                max_temp = system_health.max_temperature
+                typer.echo(f"Max temperature: {max_temp:.1f}°C")
+                typer.echo(
+                    f"Total errors (24h): {system_health.total_errors_24h}"
+                )
+
+                if system_health.critical_drives > 0:
+                    typer.echo()
+                    typer.echo("Critical Drives:")
+                    for drive in system_health.drives:
+                        temp_check = ""
+                        if (drive.temperature_current and
+                            drive.temperature_critical and
+                            drive.temperature_current >=
+                            drive.temperature_critical):
+                            temp_check = (
+                                f" (≥{drive.temperature_critical}°C threshold)"
+                            )
+
+                        errors = (
+                            drive.reallocated_sectors_24h +
+                            drive.pending_sectors_24h +
+                            drive.media_errors_24h
+                        )
+                        if errors > 0 or temp_check:
+                            typer.echo(
+                                f"  - {drive.device_path} ({drive.serial}): "
+                                f"{drive.temperature_current}°C{temp_check}, "
+                                f"{errors} new errors"
+                            )
+
+    except Exception as e:
+        logger.error(f"Remote analysis failed: {e}")
         raise typer.Exit(1)
 
 

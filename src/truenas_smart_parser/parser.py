@@ -77,6 +77,49 @@ class DriveHealth:
     power_cycles: int = 0
     last_updated: datetime | None = None
 
+    def to_dict(self) -> dict:
+        """Convert to JSON-serializable dictionary."""
+        return {
+            'device_path': self.device_path,
+            'drive_type': self.drive_type,
+            'serial': self.serial,
+            'temperature': {
+                'current': self.temperature_current,
+                'max_24h': self.temperature_max_24h,
+                'warning': self.temperature_warning,
+                'critical': self.temperature_critical,
+                'operational_max': self.temperature_operational_max,
+            },
+            'errors': {
+                'total': {
+                    'reallocated_sectors': self.reallocated_sectors_total,
+                    'pending_sectors': self.pending_sectors_total,
+                    'uncorrectable_sectors': self.uncorrectable_sectors_total,
+                    'read_errors': self.read_errors_total,
+                    'media_errors': self.media_errors_total,
+                },
+                '24h': {
+                    'reallocated_sectors': self.reallocated_sectors_24h,
+                    'pending_sectors': self.pending_sectors_24h,
+                    'uncorrectable_sectors': self.uncorrectable_sectors_24h,
+                    'read_errors': self.read_errors_24h,
+                    'media_errors': self.media_errors_24h,
+                },
+            },
+            'nvme_specific': {
+                'available_spare_pct': self.available_spare_pct,
+                'percentage_used': self.percentage_used,
+                'unsafe_shutdowns': self.unsafe_shutdowns,
+            },
+            'info': {
+                'power_on_hours': self.power_on_hours,
+                'power_cycles': self.power_cycles,
+                'last_updated': (
+                    self.last_updated.isoformat() if self.last_updated else None
+                ),
+            },
+        }
+
 
 def parse_ata_csv(csv_content: str) -> pl.DataFrame:
     """Parse ATA SMART CSV format into a polars DataFrame.
@@ -186,7 +229,8 @@ def parse_nvme_csv(csv_content: str) -> pl.DataFrame:
 
 def analyze_ata_health(df: pl.DataFrame, serial: str,
                       device_path: str = "",
-                      thresholds: dict[str, float | None] | None = None) -> DriveHealth:
+                      thresholds: dict[str, float | None] | None = None
+                      ) -> DriveHealth:
     """Analyze ATA drive health from parsed DataFrame."""
     if df.is_empty():
         return DriveHealth(
@@ -208,13 +252,16 @@ def analyze_ata_health(df: pl.DataFrame, serial: str,
     # Temperature analysis
     temp_current = latest.get(f'attr_{ATTR_TEMPERATURE_CELSIUS}_raw')
     temp_max_24h = None
-    if not df_24h.is_empty() and f'attr_{ATTR_TEMPERATURE_CELSIUS}_raw' in df_24h.columns:
+    if (not df_24h.is_empty() and
+        f'attr_{ATTR_TEMPERATURE_CELSIUS}_raw' in df_24h.columns):
         temp_max_24h = df_24h[f'attr_{ATTR_TEMPERATURE_CELSIUS}_raw'].max()
 
     # Error analysis - get latest values
     reallocated_total = latest.get(f'attr_{ATTR_REALLOCATED_SECTOR_CT}_raw', 0)
     pending_total = latest.get(f'attr_{ATTR_CURRENT_PENDING_SECTOR}_raw', 0)
-    uncorrectable_total = latest.get(f'attr_{ATTR_OFFLINE_UNCORRECTABLE}_raw', 0)
+    uncorrectable_total = latest.get(
+        f'attr_{ATTR_OFFLINE_UNCORRECTABLE}_raw', 0
+    )
     read_errors_total = latest.get(f'attr_{ATTR_RAW_READ_ERROR_RATE}_raw', 0)
 
     # Calculate 24h changes
@@ -227,13 +274,33 @@ def analyze_ata_health(df: pl.DataFrame, serial: str,
         first_24h = df_24h.row(0, named=True)
 
         if f'attr_{ATTR_REALLOCATED_SECTOR_CT}_raw' in first_24h:
-            reallocated_24h = max(0, reallocated_total - first_24h.get(f'attr_{ATTR_REALLOCATED_SECTOR_CT}_raw', 0))
+            reallocated_24h = max(
+                0,
+                reallocated_total - first_24h.get(
+                    f'attr_{ATTR_REALLOCATED_SECTOR_CT}_raw', 0
+                )
+            )
         if f'attr_{ATTR_CURRENT_PENDING_SECTOR}_raw' in first_24h:
-            pending_24h = max(0, pending_total - first_24h.get(f'attr_{ATTR_CURRENT_PENDING_SECTOR}_raw', 0))
+            pending_24h = max(
+                0,
+                pending_total - first_24h.get(
+                    f'attr_{ATTR_CURRENT_PENDING_SECTOR}_raw', 0
+                )
+            )
         if f'attr_{ATTR_OFFLINE_UNCORRECTABLE}_raw' in first_24h:
-            uncorrectable_24h = max(0, uncorrectable_total - first_24h.get(f'attr_{ATTR_OFFLINE_UNCORRECTABLE}_raw', 0))
+            uncorrectable_24h = max(
+                0,
+                uncorrectable_total - first_24h.get(
+                    f'attr_{ATTR_OFFLINE_UNCORRECTABLE}_raw', 0
+                )
+            )
         if f'attr_{ATTR_RAW_READ_ERROR_RATE}_raw' in first_24h:
-            read_errors_24h = max(0, read_errors_total - first_24h.get(f'attr_{ATTR_RAW_READ_ERROR_RATE}_raw', 0))
+            read_errors_24h = max(
+                0,
+                read_errors_total - first_24h.get(
+                    f'attr_{ATTR_RAW_READ_ERROR_RATE}_raw', 0
+                )
+            )
 
     # Get thresholds
     thresholds = thresholds or {}
@@ -245,8 +312,12 @@ def analyze_ata_health(df: pl.DataFrame, serial: str,
         device_path=device_path,
         drive_type='ata',
         serial=serial,
-        temperature_current=float(temp_current) if temp_current is not None else None,
-        temperature_max_24h=float(temp_max_24h) if temp_max_24h is not None else None,
+        temperature_current=(
+            float(temp_current) if temp_current is not None else None
+        ),
+        temperature_max_24h=(
+            float(temp_max_24h) if temp_max_24h is not None else None
+        ),
         temperature_warning=temp_warning,
         temperature_critical=temp_critical,
         temperature_operational_max=temp_operational,
@@ -266,7 +337,8 @@ def analyze_ata_health(df: pl.DataFrame, serial: str,
 
 def analyze_nvme_health(df: pl.DataFrame, serial: str,
                        device_path: str = "",
-                       thresholds: dict[str, float | None] | None = None) -> DriveHealth:
+                       thresholds: dict[str, float | None] | None = None
+                       ) -> DriveHealth:
     """Analyze NVMe drive health from parsed DataFrame."""
     if df.is_empty():
         return DriveHealth(
@@ -299,7 +371,12 @@ def analyze_nvme_health(df: pl.DataFrame, serial: str,
     if not df_24h.is_empty() and len(df_24h) > 1:
         first_24h = df_24h.row(0, named=True)
         if 'media_and_data_integrity_errors' in first_24h:
-            media_errors_24h = max(0, media_errors_total - first_24h.get('media_and_data_integrity_errors', 0))
+            media_errors_24h = max(
+                0,
+                media_errors_total - first_24h.get(
+                    'media_and_data_integrity_errors', 0
+                )
+            )
 
     # Get thresholds
     thresholds = thresholds or {}
@@ -311,8 +388,12 @@ def analyze_nvme_health(df: pl.DataFrame, serial: str,
         device_path=device_path,
         drive_type='nvme',
         serial=serial,
-        temperature_current=float(temp_current) if temp_current is not None else None,
-        temperature_max_24h=float(temp_max_24h) if temp_max_24h is not None else None,
+        temperature_current=(
+            float(temp_current) if temp_current is not None else None
+        ),
+        temperature_max_24h=(
+            float(temp_max_24h) if temp_max_24h is not None else None
+        ),
         temperature_warning=temp_warning,
         temperature_critical=temp_critical,
         temperature_operational_max=temp_operational,
@@ -367,8 +448,36 @@ class SystemHealth:
     ata_drives: int
     last_updated: datetime
 
+    def to_dict(self) -> dict:
+        """Convert to JSON-serializable dictionary."""
+        return {
+            'summary': {
+                'total_drives': self.total_drives,
+                'healthy_drives': self.healthy_drives,
+                'warning_drives': self.warning_drives,
+                'critical_drives': self.critical_drives,
+                'total_errors_24h': self.total_errors_24h,
+                'max_temperature': self.max_temperature,
+                'total_reallocated_sectors': self.total_reallocated_sectors,
+                'total_pending_sectors': self.total_pending_sectors,
+                'total_media_errors': self.total_media_errors,
+            },
+            'system': {
+                'oldest_drive_hours': self.oldest_drive_hours,
+                'newest_drive_hours': self.newest_drive_hours,
+                'nvme_drives': self.nvme_drives,
+                'ata_drives': self.ata_drives,
+                'last_updated': (
+                    self.last_updated.isoformat() if self.last_updated else None
+                ),
+            },
+            'drives': [drive.to_dict() for drive in self.drives],
+        }
 
-def query_ata_thresholds(device_path: str, ssh_command: Callable | None = None) -> dict[str, float | None]:
+
+def query_ata_thresholds(
+    device_path: str, ssh_command: Callable | None = None
+) -> dict[str, float | None]:
     """Query ATA drive temperature thresholds.
     
     Args:
@@ -404,7 +513,9 @@ def query_ata_thresholds(device_path: str, ssh_command: Callable | None = None) 
         return {"warning": None, "critical": 70.0, "operational_max": 60.0}
 
 
-def query_nvme_thresholds(device_path: str, ssh_command: Callable | None = None) -> dict[str, float | None]:
+def query_nvme_thresholds(
+    device_path: str, ssh_command: Callable | None = None
+) -> dict[str, float | None]:
     """Query NVMe drive temperature thresholds.
     
     Args:
@@ -442,7 +553,9 @@ def query_nvme_thresholds(device_path: str, ssh_command: Callable | None = None)
         return {"warning": 85.0, "critical": 95.0, "operational_max": 85.0}
 
 
-def _extract_drive_info(filename: str) -> tuple[str, str, str]:
+def _extract_drive_info(
+    filename: str
+) -> tuple[str, str, str]:
     """Extract serial, model, and drive type from filename.
     
     Filename format:
@@ -612,11 +725,14 @@ def analyze_smart_directory(smart_dir: str | Path,
 
         if drive.temperature_current is not None:
             # Use drive-specific thresholds if available
-            if drive.temperature_critical and drive.temperature_current >= drive.temperature_critical:
+            if (drive.temperature_critical and
+                drive.temperature_current >= drive.temperature_critical):
                 temp_is_critical = True
-            elif drive.temperature_warning and drive.temperature_current >= drive.temperature_warning:
+            elif (drive.temperature_warning and
+                  drive.temperature_current >= drive.temperature_warning):
                 temp_is_warning = True
-            elif drive.temperature_operational_max and drive.temperature_current >= drive.temperature_operational_max:
+            elif (drive.temperature_operational_max and
+                  drive.temperature_current >= drive.temperature_operational_max):
                 temp_is_warning = True
 
         # Critical: any new errors in 24h or critical temp
