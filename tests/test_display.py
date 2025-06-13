@@ -243,9 +243,9 @@ class TestTables:
         display_system_health(system, console)
         output = console.file.getvalue()
         
-        # Verify both tables are present
+        # Verify both tables are present (compact is now default)
         assert "System Health Summary" in output
-        assert "Drive Health Details" in output
+        assert "Drive Health Details (Compact)" in output
         assert "Legend:" in output
 
     def test_compact_drives_table(self):
@@ -320,8 +320,8 @@ class TestTables:
         assert "Spare: 95%" in output  # NVMe specific
         assert "Used: 5%" in output
 
-    def test_compact_display(self):
-        """Test full compact display."""
+    def test_wide_display(self):
+        """Test full wide display."""
         drives = [
             DriveHealth(
                 device_path="/dev/sda",
@@ -356,12 +356,13 @@ class TestTables:
             last_updated=datetime.now()
         )
         
-        # Test compact mode
+        # Test wide mode (non-default)
         console = Console(file=StringIO(), force_terminal=True)
-        display_system_health(system, console, compact=True)
+        display_system_health(system, console, compact=False)
         output = console.file.getvalue()
         
-        # Verify compact table is used
-        assert "Drive Health Details (Compact)" in output
+        # Verify wide table is used
+        assert "Drive Health Details" in output
+        assert "Drive Health Details (Compact)" not in output
         assert "System Health Summary" in output
         assert "Legend:" in output

@@ -69,10 +69,10 @@ def analyze(
         "--json",
         help="Output results as JSON"
     ),
-    compact: bool = typer.Option(
+    wide: bool = typer.Option(
         False,
-        "--compact",
-        help="Use compact multi-line table layout"
+        "--wide",
+        help="Use wide single-line table layout"
     ),
     verbose: bool = typer.Option(
         False,
@@ -115,7 +115,7 @@ def analyze(
         else:
             # Rich tabular display
             console = Console()
-            display_system_health(system_health, console, compact=compact)
+            display_system_health(system_health, console, compact=not wide)
 
     except Exception as e:
         logger.error(f"Analysis failed: {e}")
@@ -139,10 +139,10 @@ def analyze_remote(
         "--json",
         help="Output results as JSON"
     ),
-    compact: bool = typer.Option(
+    wide: bool = typer.Option(
         False,
-        "--compact",
-        help="Use compact multi-line table layout"
+        "--wide",
+        help="Use wide single-line table layout"
     ),
     verbose: bool = typer.Option(
         False,
@@ -259,7 +259,7 @@ def analyze_remote(
             else:
                 # Rich tabular display
                 console = Console()
-                display_system_health(system_health, console, compact=compact)
+                display_system_health(system_health, console, compact=not wide)
 
     except Exception as e:
         logger.error(f"Remote analysis failed: {e}")

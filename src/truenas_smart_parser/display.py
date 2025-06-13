@@ -433,7 +433,7 @@ def create_drives_table(system: SystemHealth) -> Table:
     return table
 
 
-def display_system_health(system: SystemHealth, console: Console | None = None, compact: bool = False):
+def display_system_health(system: SystemHealth, console: Console | None = None, compact: bool = True):
     """Display system health using rich tables."""
     if console is None:
         console = Console()

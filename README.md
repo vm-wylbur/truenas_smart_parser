@@ -9,7 +9,10 @@ Parse and analyze SMART data from TrueNAS drives with manufacturer-specific temp
 - Query live temperature thresholds from drives
 - Health classification based on actual manufacturer limits
 - 24-hour error tracking and temperature monitoring
-- CLI and Python API
+- **Compact table layout by default** for readable output on standard terminals
+- **Auto-scan remote hosts** for device mapping (no manual configuration)
+- **Quiet by default** with optional verbose logging
+- CLI and Python API with JSON output support
 
 ## Installation
 
@@ -27,7 +30,7 @@ uv pip install -e ".[dev]"
 ### Command Line
 
 ```bash
-# Analyze local SMART data (rich tabular display by default)
+# Analyze local SMART data (compact tabular display by default)
 truenas-smart-parser analyze /var/lib/smartmontools/
 
 # Analyze remote TrueNAS via SSH
@@ -36,9 +39,9 @@ truenas-smart-parser analyze-remote nas
 # Analyze with SSH threshold queries
 truenas-smart-parser analyze /var/lib/smartmontools/ --ssh-host nas
 
-# Use compact multi-line table layout (for wide tables)
-truenas-smart-parser analyze /var/lib/smartmontools/ --compact
-truenas-smart-parser analyze-remote nas --compact
+# Use wide single-line table layout (if you prefer the old format)
+truenas-smart-parser analyze /var/lib/smartmontools/ --wide
+truenas-smart-parser analyze-remote nas --wide
 
 # Use device mapping for better output (optional - auto-scan is default for remote)
 truenas-smart-parser analyze /var/lib/smartmontools/ --device-map device_map.json
@@ -51,10 +54,14 @@ truenas-smart-parser analyze-remote nas --json
 truenas-smart-parser analyze-remote nas --verbose
 ```
 
-The default output uses rich tables with color coding:
+The default output uses compact rich tables with color coding:
 - 🟢 Green: Healthy drives
 - 🟡 Yellow: Warning (high temp or existing errors)
 - 🔴 Red: Critical (critical temp or new errors in 24h)
+
+**Compact Format**: The default condensed two-line format per drive shows all health information while fitting standard terminal widths.
+
+**Auto-Discovery**: Remote analysis automatically scans for device mappings, showing proper device names (sda, nvme0) without manual configuration.
 
 ### Python API
 
