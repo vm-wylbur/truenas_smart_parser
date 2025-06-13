@@ -102,7 +102,8 @@ def analyze(
         system_health = analyze_smart_directory(
             smart_dir,
             device_mapping=device_mapping,
-            auto_discover_devices=(device_mapping is None)
+            auto_discover_devices=(device_mapping is None),
+            verbose=verbose
         )
 
         if json_output:
@@ -177,7 +178,8 @@ def analyze_remote(
             smart_dir=smart_dir,
             device_mapping=device_mapping,
             ssh_options=parsed_ssh_options,
-            auto_discover_devices=(device_mapping is None)
+            auto_discover_devices=(device_mapping is None),
+            verbose=verbose
         )
 
         if json_output:

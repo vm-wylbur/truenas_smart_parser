@@ -797,9 +797,18 @@ def analyze_smart_directory(smart_dir: str | Path,
 
     for csv_file in csv_files:
         try:
+            # Check if CSV file is recent (within last 24 hours)
+            file_age = datetime.now() - datetime.fromtimestamp(csv_file.stat().st_mtime)
+            if file_age > timedelta(hours=24):
+                if verbose:
+                    logger.warning(f"Skipping stale CSV file {csv_file.name} (age: {file_age.days}d {file_age.seconds//3600}h)")
+                else:
+                    logger.debug(f"Skipping stale CSV file {csv_file.name} (age: {file_age.days}d {file_age.seconds//3600}h)")
+                continue
+            
             # Extract info from filename
             serial, model, drive_type = _extract_drive_info(csv_file.name)
-            logger.debug(f"CSV file {csv_file.name}: serial={serial}, model={model}, type={drive_type}")
+            logger.debug(f"CSV file {csv_file.name}: serial={serial}, model={model}, type={drive_type}, age={file_age.seconds//3600}h")
 
             # Get device path from mapping or generate one
             device_path = device_mapping.get(serial, f"/dev/unknown_{serial[:8]}")
