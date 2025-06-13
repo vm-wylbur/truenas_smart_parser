@@ -36,15 +36,19 @@ truenas-smart-parser analyze-remote nas
 # Analyze with SSH threshold queries
 truenas-smart-parser analyze /var/lib/smartmontools/ --ssh-host nas
 
-# Scan remote host and create device mapping
-truenas-smart-parser scan nas -o device_map.json
+# Use compact multi-line table layout (for wide tables)
+truenas-smart-parser analyze /var/lib/smartmontools/ --compact
+truenas-smart-parser analyze-remote nas --compact
 
-# Use device mapping for better output
+# Use device mapping for better output (optional - auto-scan is default for remote)
 truenas-smart-parser analyze /var/lib/smartmontools/ --device-map device_map.json
 
 # Output as JSON instead of tables
 truenas-smart-parser analyze /var/lib/smartmontools/ --json
 truenas-smart-parser analyze-remote nas --json
+
+# Enable verbose logging
+truenas-smart-parser analyze-remote nas --verbose
 ```
 
 The default output uses rich tables with color coding:

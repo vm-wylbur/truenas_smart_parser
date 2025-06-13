@@ -29,6 +29,7 @@ from rich.console import Console
 from truenas_smart_parser import DriveHealth, SystemHealth
 from truenas_smart_parser.display import (
     create_drives_table,
+    create_drives_table_compact,
     create_system_summary_table,
     display_system_health,
     get_health_status,
@@ -245,4 +246,122 @@ class TestTables:
         # Verify both tables are present
         assert "System Health Summary" in output
         assert "Drive Health Details" in output
+        assert "Legend:" in output
+
+    def test_compact_drives_table(self):
+        """Test compact drives table creation."""
+        drives = [
+            DriveHealth(
+                device_path="/dev/sda",
+                drive_type="ata",
+                serial="ATA123",
+                temperature_current=45.0,
+                temperature_max_24h=48.0,
+                temperature_warning=60.0,
+                temperature_critical=70.0,
+                power_on_hours=20000,
+                reallocated_sectors_total=5,
+                reallocated_sectors_24h=1,
+                pending_sectors_total=0,
+                media_errors_total=0,
+                uncorrectable_sectors_total=0,
+                last_updated=datetime.now()
+            ),
+            DriveHealth(
+                device_path="/dev/nvme0",
+                drive_type="nvme",
+                serial="NVME456",
+                temperature_current=50.0,
+                temperature_max_24h=52.0,
+                temperature_warning=85.0,
+                temperature_critical=95.0,
+                available_spare_pct=95.0,
+                percentage_used=5.0,
+                power_on_hours=10000,
+                reallocated_sectors_total=0,
+                pending_sectors_total=0,
+                media_errors_total=0,
+                uncorrectable_sectors_total=0,
+                last_updated=datetime.now()
+            ),
+        ]
+        
+        system = SystemHealth(
+            drives=drives,
+            total_drives=2,
+            healthy_drives=1,
+            warning_drives=1,
+            critical_drives=0,
+            total_errors_24h=1,
+            max_temperature=50.0,
+            total_reallocated_sectors=5,
+            total_pending_sectors=0,
+            total_media_errors=0,
+            oldest_drive_hours=20000,
+            newest_drive_hours=10000,
+            nvme_drives=1,
+            ata_drives=1,
+            last_updated=datetime.now()
+        )
+        
+        table = create_drives_table_compact(system)
+        assert table.title == "Drive Health Details (Compact)"
+        
+        # Render to verify
+        console = Console(file=StringIO(), width=120)
+        console.print(table)
+        output = console.file.getvalue()
+        
+        # Check compact format elements
+        assert "sda" in output  # Device without /dev/
+        assert "Serial: ATA123" in output
+        assert "5/0/0/0" in output  # Error summary
+        assert "Real/Pend/Media/Uncorr" in output
+        assert "Spare: 95%" in output  # NVMe specific
+        assert "Used: 5%" in output
+
+    def test_compact_display(self):
+        """Test full compact display."""
+        drives = [
+            DriveHealth(
+                device_path="/dev/sda",
+                drive_type="ata",
+                serial="TEST123",
+                temperature_current=45.0,
+                temperature_max_24h=48.0,
+                power_on_hours=10000,
+                reallocated_sectors_total=0,
+                pending_sectors_total=0,
+                media_errors_total=0,
+                uncorrectable_sectors_total=0,
+                last_updated=datetime.now()
+            )
+        ]
+        
+        system = SystemHealth(
+            drives=drives,
+            total_drives=1,
+            healthy_drives=1,
+            warning_drives=0,
+            critical_drives=0,
+            total_errors_24h=0,
+            max_temperature=45.0,
+            total_reallocated_sectors=0,
+            total_pending_sectors=0,
+            total_media_errors=0,
+            oldest_drive_hours=10000,
+            newest_drive_hours=10000,
+            nvme_drives=0,
+            ata_drives=1,
+            last_updated=datetime.now()
+        )
+        
+        # Test compact mode
+        console = Console(file=StringIO(), force_terminal=True)
+        display_system_health(system, console, compact=True)
+        output = console.file.getvalue()
+        
+        # Verify compact table is used
+        assert "Drive Health Details (Compact)" in output
+        assert "System Health Summary" in output
         assert "Legend:" in output

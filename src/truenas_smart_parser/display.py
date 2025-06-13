@@ -172,6 +172,142 @@ def create_system_summary_table(system: SystemHealth) -> Table:
     return table
 
 
+def create_drives_table_compact(system: SystemHealth) -> Table:
+    """Create compact multi-line drives table."""
+    table = Table(title="Drive Health Details (Compact)", show_edge=True)
+    
+    # Compact columns
+    table.add_column("Device Info", style="cyan")
+    table.add_column("Type", width=4)
+    table.add_column("Stat", justify="center", width=4)
+    table.add_column("Health Details")
+    
+    for drive in system.drives:
+        status_emoji, status_color = get_health_status(drive)
+        
+        # Device name without /dev/ prefix
+        device_name = drive.device_path.replace("/dev/", "")
+        
+        # Temperature formatting
+        temp_current = drive.temperature_current
+        temp_max = drive.temperature_max_24h
+        
+        # Temperature limits
+        limits = []
+        if drive.temperature_warning:
+            limits.append(f"{drive.temperature_warning:.0f}")
+        else:
+            limits.append("-")
+        
+        if drive.temperature_critical:
+            limits.append(f"{drive.temperature_critical:.0f}")
+        else:
+            limits.append("-")
+        
+        limits_text = "/".join(limits)
+        
+        # Power on time
+        if drive.power_on_hours > 0:
+            days = drive.power_on_hours // 24
+            age_text = f"{days:,d}d"
+        else:
+            age_text = "N/A"
+        
+        # Error summary (Real/Pend/Media/Uncorr)
+        error_counts = [
+            drive.reallocated_sectors_total,
+            drive.pending_sectors_total, 
+            drive.media_errors_total,
+            drive.uncorrectable_sectors_total
+        ]
+        error_summary = "/".join(str(count) for count in error_counts)
+        
+        # Check for new errors to color the summary
+        has_new_errors = (
+            drive.reallocated_sectors_24h > 0 or
+            drive.pending_sectors_24h > 0 or
+            drive.media_errors_24h > 0 or
+            drive.uncorrectable_sectors_24h > 0
+        )
+        
+        if has_new_errors:
+            error_text = Text(error_summary, style="red bold")
+        elif sum(error_counts) > 0:
+            error_text = Text(error_summary, style="yellow")
+        else:
+            error_text = Text(error_summary, style="dim")
+        
+        # Build health details line 1
+        temp_color = get_temp_color(
+            temp_current, drive.temperature_warning, drive.temperature_critical
+        )
+        
+        health_line1 = Text()
+        health_line1.append("Temp: ")
+        if temp_current is not None:
+            health_line1.append(f"{temp_current:.0f}°C", style=temp_color)
+        else:
+            health_line1.append("N/A", style="dim")
+        
+        if temp_max is not None:
+            max_color = get_temp_color(
+                temp_max, drive.temperature_warning, drive.temperature_critical
+            )
+            health_line1.append(f" (max {temp_max:.0f}°C", style=max_color)
+        else:
+            health_line1.append(" (max N/A", style="dim")
+        
+        health_line1.append(f", limits {limits_text}) • Age: {age_text}")
+        
+        # Build health details line 2
+        health_line2 = Text("Errors: ")
+        health_line2.append(error_text)
+        health_line2.append(" (Real/Pend/Media/Uncorr)")
+        
+        # Add NVMe specific info
+        if drive.drive_type == 'nvme':
+            if drive.available_spare_pct is not None:
+                spare_pct = drive.available_spare_pct
+                if spare_pct < 10:
+                    spare_style = "red"
+                elif spare_pct < 20:
+                    spare_style = "yellow"
+                else:
+                    spare_style = "green"
+                health_line2.append(f" • Spare: ")
+                health_line2.append(f"{spare_pct:.0f}%", style=spare_style)
+            
+            if drive.percentage_used is not None:
+                health_line2.append(f" • Used: {drive.percentage_used:.0f}%")
+        
+        # Add rows with appropriate styling
+        row_style = "bold" if status_color == "red" else None
+        
+        # First row: device info
+        table.add_row(
+            device_name,
+            drive.drive_type.upper(),
+            Text(status_emoji, style=status_color),
+            health_line1,
+            style=row_style
+        )
+        
+        # Second row: serial and health details
+        table.add_row(
+            f"Serial: {drive.serial}",
+            "",  # Empty type column
+            "",  # Empty status column
+            health_line2,
+            style=row_style
+        )
+        
+        # Add separator between drives (except last)
+        if drive != system.drives[-1]:
+            table.add_section()
+    
+    return table
+
+
 def create_drives_table(system: SystemHealth) -> Table:
     """Create detailed drives table."""
     table = Table(title="Drive Health Details", show_edge=True)
@@ -297,7 +433,7 @@ def create_drives_table(system: SystemHealth) -> Table:
     return table
 
 
-def display_system_health(system: SystemHealth, console: Console | None = None):
+def display_system_health(system: SystemHealth, console: Console | None = None, compact: bool = False):
     """Display system health using rich tables."""
     if console is None:
         console = Console()
@@ -308,7 +444,10 @@ def display_system_health(system: SystemHealth, console: Console | None = None):
     console.print()
     
     # Detailed drives table
-    drives_table = create_drives_table(system)
+    if compact:
+        drives_table = create_drives_table_compact(system)
+    else:
+        drives_table = create_drives_table(system)
     console.print(drives_table)
     
     # Legend

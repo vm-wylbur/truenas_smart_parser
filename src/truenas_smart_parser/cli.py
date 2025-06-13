@@ -69,8 +69,24 @@ def analyze(
         "--json",
         help="Output results as JSON"
     ),
+    compact: bool = typer.Option(
+        False,
+        "--compact",
+        help="Use compact multi-line table layout"
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose logging output"
+    ),
 ):
     """Analyze SMART data from CSV files."""
+    # Configure logging
+    if not verbose:
+        logger.remove()
+        logger.add(lambda _: None)  # Suppress all logging
+    
     try:
         # Load device mapping if provided
         device_mapping = {}
@@ -99,7 +115,7 @@ def analyze(
         else:
             # Rich tabular display
             console = Console()
-            display_system_health(system_health, console)
+            display_system_health(system_health, console, compact=compact)
 
     except Exception as e:
         logger.error(f"Analysis failed: {e}")
@@ -123,8 +139,24 @@ def analyze_remote(
         "--json",
         help="Output results as JSON"
     ),
+    compact: bool = typer.Option(
+        False,
+        "--compact",
+        help="Use compact multi-line table layout"
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose logging output"
+    ),
 ):
     """Analyze SMART data from a remote TrueNAS host via SSH."""
+    # Configure logging
+    if not verbose:
+        logger.remove()
+        logger.add(lambda _: None)  # Suppress all logging
+    
     try:
         import tempfile
 
@@ -132,11 +164,36 @@ def analyze_remote(
         ssh_exec = ssh_exec_factory(host)
         logger.info(f"Connecting to {host} to analyze {smart_dir}")
 
-        # Load device mapping if provided
+        # Load or create device mapping
         device_mapping = {}
         if device_map and device_map.exists():
+            logger.info(f"Loading device mapping from {device_map}")
             with open(device_map) as f:
                 device_mapping = json.load(f)
+        else:
+            # Automatically scan for device mapping
+            logger.info("No device mapping provided, scanning remote host...")
+            scan_output = ssh_exec("smartctl --scan")
+            
+            for line in scan_output.strip().split('\n'):
+                if not line:
+                    continue
+                
+                parts = line.split()
+                device = parts[0]
+                
+                # Get serial number
+                info = ssh_exec(
+                    f"smartctl -i {device} | grep 'Serial Number' | "
+                    f"awk '{{print $3}}'"
+                )
+                serial = info.strip()
+                
+                if serial:
+                    device_mapping[serial] = device
+                    logger.debug(f"  Found {device}: {serial}")
+            
+            logger.info(f"Auto-discovered {len(device_mapping)} drives")
 
         # Create temporary directory for CSV files
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -188,7 +245,7 @@ def analyze_remote(
                 logger.debug(f"Copied {filename}")
 
             # Now analyze the local copies with SSH threshold queries
-            logger.info("Analyzing SMART data...")
+            logger.info(f"Analyzing SMART data with {len(device_mapping)} mapped drives...")
             system_health = analyze_smart_directory(
                 tmppath,
                 device_mapping=device_mapping,
@@ -202,59 +259,12 @@ def analyze_remote(
             else:
                 # Rich tabular display
                 console = Console()
-                display_system_health(system_health, console)
+                display_system_health(system_health, console, compact=compact)
 
     except Exception as e:
         logger.error(f"Remote analysis failed: {e}")
         raise typer.Exit(1)
 
-
-@app.command()
-def scan(
-    ssh_host: str = typer.Argument(..., help="SSH host to scan for drives"),
-    output: Path = typer.Option(
-        "device_map.json",
-        "--output",
-        "-o",
-        help="Output file for device mapping"
-    ),
-):
-    """Scan remote host for drives and create device mapping."""
-    try:
-        ssh_exec = ssh_exec_factory(ssh_host)
-
-        logger.info(f"Scanning drives on {ssh_host}")
-        scan_output = ssh_exec("smartctl --scan")
-
-        device_mapping = {}
-        for line in scan_output.strip().split('\n'):
-            if not line:
-                continue
-
-            parts = line.split()
-            device = parts[0]
-
-            # Get serial number
-            info = ssh_exec(
-                f"smartctl -i {device} | grep 'Serial Number' | "
-                f"awk '{{print $3}}'"
-            )
-            serial = info.strip()
-
-            if serial:
-                device_mapping[serial] = device
-                logger.info(f"  Found {device}: {serial}")
-
-        # Save mapping
-        with open(output, 'w') as f:
-            json.dump(device_mapping, f, indent=2)
-
-        typer.echo(f"Found {len(device_mapping)} drives")
-        typer.echo(f"Device mapping saved to {output}")
-
-    except Exception as e:
-        logger.error(f"Scan failed: {e}")
-        raise typer.Exit(1)
 
 
 if __name__ == "__main__":
