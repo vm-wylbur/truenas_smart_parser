@@ -1,0 +1,66 @@
+[project]
+name = "nas-smartdata"
+version = "0.1.0"
+description = "Parse and analyze SMART data from NAS drives with temperature threshold support"
+readme = "README.md"
+authors = [
+    {name = "PB & Claude", email = "pball+github@hrdag.org"}
+]
+license = {text = "GPL-2.0-or-later"}
+requires-python = ">=3.13"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Monitoring",
+    "Topic :: System :: Systems Administration",
+]
+keywords = ["smart", "nas", "monitoring", "storage", "disk", "health"]
+dependencies = [
+    "polars>=1.0.0",
+    "typer>=0.9.0",
+    "loguru>=0.7.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/example/nas-smartdata"
+Repository = "https://github.com/example/nas-smartdata"
+Issues = "https://github.com/example/nas-smartdata/issues"
+
+[project.scripts]
+nas-smartdata = "nas_smartdata.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+dev-dependencies = [
+    "mypy>=1.0.0,<2.0.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.7.0,<1.0.0",
+]
+
+[tool.ruff]
+line-length = 79
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+skip-magic-trailing-comma = true
+
+[tool.ruff.lint.isort]
+known-first-party = ["nas_smartdata"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
