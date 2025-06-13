@@ -17,7 +17,7 @@
 # with this program; if not, see <https://www.gnu.org/licenses/>.
 #
 # ------
-# nas-smartdata/src/nas_smartdata/parser.py
+# truenas-smart-parser/src/truenas_smart_parser/parser.py
 
 import json
 import subprocess

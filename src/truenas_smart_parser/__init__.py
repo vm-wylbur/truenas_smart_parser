@@ -17,9 +17,9 @@
 # with this program; if not, see <https://www.gnu.org/licenses/>.
 #
 # ------
-# nas-smartdata/src/nas_smartdata/__init__.py
+# truenas-smart-parser/src/truenas_smart_parser/__init__.py
 
-"""NAS SMART data parser and analyzer.
+"""TrueNAS SMART data parser and analyzer.
 
 Parse SMART CSV logs from smartmontools and analyze drive health with
 manufacturer-specific temperature thresholds.

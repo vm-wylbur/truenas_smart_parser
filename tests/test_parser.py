@@ -17,11 +17,18 @@
 # with this program; if not, see <https://www.gnu.org/licenses/>.
 #
 # ------
-# nas-smartdata/tests/test_parser.py
+# truenas-smart-parser/tests/test_parser.py
 
 from datetime import datetime
 
 import pytest
+
+from truenas_smart_parser import (
+    analyze_ata_health,
+    analyze_nvme_health,
+    parse_ata_csv,
+    parse_nvme_csv,
+)
 
 # Sample ATA CSV data with known values
 ATA_CSV_SAMPLE = """2025-06-12 06:43:41;	1;100;0;	5;100;0;	9;100;1768;	12;100;25;	194;69;31;	197;100;0;
@@ -39,44 +46,30 @@ class TestATAParsing:
 
     def test_parse_ata_basic(self):
         """Test basic parsing of ATA format returns correct structure."""
-        # Expected results for first row
-        expected_timestamp = datetime(2025, 6, 12, 6, 43, 41)
-        expected_attrs = {
-            1: {"norm": 100, "raw": 0},    # Raw_Read_Error_Rate
-            5: {"norm": 100, "raw": 0},    # Reallocated_Sector_Ct
-            9: {"norm": 100, "raw": 1768}, # Power_On_Hours
-            12: {"norm": 100, "raw": 25},  # Power_Cycle_Count
-            194: {"norm": 69, "raw": 31},  # Temperature_Celsius
-            197: {"norm": 100, "raw": 0},  # Current_Pending_Sector
-        }
-
-        # Parse will be implemented in smart_parser.py
-        # For now, verify the test data structure
-        lines = ATA_CSV_SAMPLE.strip().split('\n')
-        assert len(lines) == 3
-
-        # Verify first line structure
-        parts = lines[0].split(';')
-        assert parts[0] == "2025-06-12 06:43:41"
-
-        # Check attribute 194 (temperature) values across time
-        # Row 1: norm=69, raw=31°C
-        # Row 2: norm=70, raw=30°C
-        # Row 3: norm=68, raw=32°C
+        # Parse the CSV
+        df = parse_ata_csv(ATA_CSV_SAMPLE)
+        
+        # Verify we got 3 rows
+        assert len(df) == 3
+        
+        # Check first row timestamp
+        first_row = df.row(0, named=True)
+        assert first_row['timestamp'] == datetime(2025, 6, 12, 6, 43, 41)
+        
+        # Check temperature values (attr 194)
+        assert df['attr_194_raw'].to_list() == [31, 30, 32]
+        
+        # Check power-on hours (attr 9)
+        assert df['attr_9_raw'].to_list() == [1768, 1768, 1769]
 
     def test_parse_ata_reallocated_sectors(self):
         """Test detection of reallocated sectors increase."""
-        lines = ATA_CSV_SAMPLE.strip().split('\n')
-
-        # In row 3, attribute 5 (Reallocated_Sector_Ct) raw value changes from 0 to 1
-        # This indicates a new bad sector was reallocated
-        row3_parts = lines[2].split(';')
-
-        # Find attribute 5 in the data
-        for i in range(1, len(row3_parts), 3):
-            if row3_parts[i].strip() == "5":
-                assert row3_parts[i+2].strip() == "1"  # raw value = 1
-                break
+        df = parse_ata_csv(ATA_CSV_SAMPLE)
+        health = analyze_ata_health(df, serial="TEST001", device_path="/dev/sda")
+        
+        # Check that reallocated sectors increased from 0 to 1
+        assert health.reallocated_sectors_total == 1
+        assert health.reallocated_sectors_24h == 1
 
 
 class TestNVMeParsing:
@@ -84,39 +77,31 @@ class TestNVMeParsing:
 
     def test_parse_nvme_basic(self):
         """Test basic parsing of NVMe format returns correct structure."""
-        # Expected results for first row
-        expected_timestamp = datetime(2025, 6, 12, 6, 43, 41)
-        expected_attrs = {
-            "temperature": "57",
-            "available_spare": "100%",
-            "percentage_used": "0%",
-            "power_on_hours": "1747",
-            "unsafe_shutdowns": "11",
-            "media_and_data_integrity_errors": "0",
-        }
-
-        lines = NVME_CSV_SAMPLE.strip().split('\n')
-        assert len(lines) == 3
-
-        # Verify first line structure
-        parts = lines[0].split(';')
-        assert parts[0] == "2025-06-12 06:43:41"
-
-        # Temperature should decrease from 57 to 49
-        # media_and_data_integrity_errors increases from 0 to 1 in row 3
+        # Parse the CSV
+        df = parse_nvme_csv(NVME_CSV_SAMPLE)
+        
+        # Verify we got 3 rows
+        assert len(df) == 3
+        
+        # Check first row timestamp
+        first_row = df.row(0, named=True)
+        assert first_row['timestamp'] == datetime(2025, 6, 12, 6, 43, 41)
+        
+        # Check temperature values
+        assert df['temperature'].to_list() == [57, 49, 49]
+        
+        # Check percentage values were parsed correctly
+        assert df['available_spare'].to_list() == [100.0, 100.0, 100.0]
+        assert df['percentage_used'].to_list() == [0.0, 0.0, 1.0]
 
     def test_parse_nvme_error_detection(self):
         """Test detection of media errors increase."""
-        lines = NVME_CSV_SAMPLE.strip().split('\n')
-
-        # In row 3, media_and_data_integrity_errors changes from 0 to 1
-        row3_parts = lines[2].split(';')
-
-        # Find media_and_data_integrity_errors
-        for i in range(1, len(row3_parts), 2):
-            if row3_parts[i].strip() == "media_and_data_integrity_errors":
-                assert row3_parts[i+1].strip() == "1"  # error count = 1
-                break
+        df = parse_nvme_csv(NVME_CSV_SAMPLE)
+        health = analyze_nvme_health(df, serial="TEST-NVME", device_path="/dev/nvme0")
+        
+        # Check that media errors increased from 0 to 1
+        assert health.media_errors_total == 1
+        assert health.media_errors_24h == 1
 
 
 class TestHealthAnalysis:
@@ -124,36 +109,34 @@ class TestHealthAnalysis:
 
     def test_temperature_max_24h(self):
         """Test calculation of max temperature in 24h window."""
-        # From ATA sample: temps are 31, 30, 32 (raw values)
-        # Expected max = 32°C
-        expected_max_temp_ata = 32
-
-        # From NVMe sample: temps are 57, 49, 49
-        # Expected max = 57°C
-        expected_max_temp_nvme = 57
+        # Test ATA temperature max
+        df_ata = parse_ata_csv(ATA_CSV_SAMPLE)
+        health_ata = analyze_ata_health(df_ata, serial="TEST", device_path="/dev/sda")
+        assert health_ata.temperature_current == 32.0  # Last value
+        assert health_ata.temperature_max_24h == 32.0  # Max of 31, 30, 32
+        
+        # Test NVMe temperature max
+        df_nvme = parse_nvme_csv(NVME_CSV_SAMPLE)
+        health_nvme = analyze_nvme_health(df_nvme, serial="TEST", device_path="/dev/nvme0")
+        assert health_nvme.temperature_current == 49.0  # Last value
+        assert health_nvme.temperature_max_24h == 57.0  # Max of 57, 49, 49
 
     def test_error_counts(self):
         """Test error counting logic."""
-        # ATA sample:
-        # - Reallocated sectors: increases from 0 to 1
-        # - Current pending: stays at 0
-
-        # NVMe sample:
-        # - Media errors: increases from 0 to 1
-        # - Unsafe shutdowns: stays at 11
-
-        expected_ata_errors = {
-            "reallocated_sectors_total": 1,
-            "reallocated_sectors_24h": 1,
-            "pending_sectors_total": 0,
-            "pending_sectors_24h": 0,
-        }
-
-        expected_nvme_errors = {
-            "media_errors_total": 1,
-            "media_errors_24h": 1,
-            "unsafe_shutdowns_total": 11,
-        }
+        # Test ATA error counts
+        df_ata = parse_ata_csv(ATA_CSV_SAMPLE)
+        health_ata = analyze_ata_health(df_ata, serial="TEST", device_path="/dev/sda")
+        assert health_ata.reallocated_sectors_total == 1
+        assert health_ata.reallocated_sectors_24h == 1
+        assert health_ata.pending_sectors_total == 0
+        assert health_ata.pending_sectors_24h == 0
+        
+        # Test NVMe error counts
+        df_nvme = parse_nvme_csv(NVME_CSV_SAMPLE)
+        health_nvme = analyze_nvme_health(df_nvme, serial="TEST", device_path="/dev/nvme0")
+        assert health_nvme.media_errors_total == 1
+        assert health_nvme.media_errors_24h == 1
+        assert health_nvme.unsafe_shutdowns == 11
 
 
 if __name__ == "__main__":

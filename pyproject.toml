@@ -1,7 +1,7 @@
 [project]
-name = "nas-smartdata"
+name = "truenas-smart-parser"
 version = "0.1.0"
-description = "Parse and analyze SMART data from NAS drives with temperature threshold support"
+description = "Parse and analyze SMART data from TrueNAS drives with temperature threshold support"
 readme = "README.md"
 authors = [
     {name = "PB & Claude", email = "pball+github@hrdag.org"}
@@ -26,12 +26,12 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/example/nas-smartdata"
-Repository = "https://github.com/example/nas-smartdata"
-Issues = "https://github.com/example/nas-smartdata/issues"
+Homepage = "https://github.com/example/truenas-smart-parser"
+Repository = "https://github.com/example/truenas-smart-parser"
+Issues = "https://github.com/example/truenas-smart-parser/issues"
 
 [project.scripts]
-nas-smartdata = "nas_smartdata.cli:app"
+truenas-smart-parser = "truenas_smart_parser.cli:app"
 
 [build-system]
 requires = ["hatchling"]
@@ -59,7 +59,7 @@ line-ending = "auto"
 skip-magic-trailing-comma = true
 
 [tool.ruff.lint.isort]
-known-first-party = ["nas_smartdata"]
+known-first-party = ["truenas_smart_parser"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

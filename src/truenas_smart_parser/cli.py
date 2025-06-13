@@ -17,7 +17,7 @@
 # with this program; if not, see <https://www.gnu.org/licenses/>.
 #
 # ------
-# nas-smartdata/src/nas_smartdata/cli.py
+# truenas-smart-parser/src/truenas_smart_parser/cli.py
 
 """Command-line interface for NAS SMART data analysis."""
 

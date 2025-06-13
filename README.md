@@ -1,6 +1,6 @@
-# nas-smartdata
+# truenas-smart-parser
 
-Parse and analyze SMART data from NAS drives with manufacturer-specific temperature threshold support.
+Parse and analyze SMART data from TrueNAS drives with manufacturer-specific temperature threshold support.
 
 ## Features
 
@@ -14,7 +14,7 @@ Parse and analyze SMART data from NAS drives with manufacturer-specific temperat
 ## Installation
 
 ```bash
-uv pip install nas-smartdata
+uv pip install truenas-smart-parser
 ```
 
 For development:
@@ -28,25 +28,25 @@ uv pip install -e ".[dev]"
 
 ```bash
 # Analyze local SMART data
-nas-smartdata analyze /var/lib/smartmontools/
+truenas-smart-parser analyze /var/lib/smartmontools/
 
 # Analyze with SSH threshold queries
-nas-smartdata analyze /var/lib/smartmontools/ --ssh-host nas
+truenas-smart-parser analyze /var/lib/smartmontools/ --ssh-host nas
 
 # Scan remote host and create device mapping
-nas-smartdata scan nas -o device_map.json
+truenas-smart-parser scan nas -o device_map.json
 
 # Use device mapping for better output
-nas-smartdata analyze /var/lib/smartmontools/ --device-map device_map.json
+truenas-smart-parser analyze /var/lib/smartmontools/ --device-map device_map.json
 
 # Output as JSON
-nas-smartdata analyze /var/lib/smartmontools/ --json
+truenas-smart-parser analyze /var/lib/smartmontools/ --json
 ```
 
 ### Python API
 
 ```python
-from nas_smartdata import analyze_smart_directory
+from truenas_smart_parser import analyze_smart_directory
 
 # Basic usage
 system_health = analyze_smart_directory("/var/lib/smartmontools/")
