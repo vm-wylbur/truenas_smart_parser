@@ -564,6 +564,46 @@ def query_nvme_thresholds(
         return {"warning": 85.0, "critical": 95.0, "operational_max": 85.0}
 
 
+def auto_discover_device_mapping(ssh_command: Callable) -> dict[str, str]:
+    """Auto-discover device mapping by scanning remote host.
+    
+    Args:
+        ssh_command: Function to execute commands via SSH
+                    Should accept command string and return output string
+    
+    Returns:
+        Dict mapping serial numbers to device paths
+        e.g., {"1RJE48WM": "/dev/sda", ...}
+    """
+    device_mapping = {}
+    
+    try:
+        scan_output = ssh_command("smartctl --scan")
+        
+        for line in scan_output.strip().split('\n'):
+            if not line:
+                continue
+            
+            parts = line.split()
+            device = parts[0]
+            
+            # Get serial number
+            info = ssh_command(
+                f"smartctl -i {device} | grep 'Serial Number' | "
+                f"awk '{{print $3}}'"
+            )
+            serial = info.strip()
+            
+            if serial:
+                device_mapping[serial] = device
+        
+    except Exception:
+        # Return empty mapping if discovery fails
+        pass
+    
+    return device_mapping
+
+
 def _extract_drive_info(
     filename: str
 ) -> tuple[str, str, str]:
@@ -610,7 +650,8 @@ def _extract_drive_info(
 
 def analyze_smart_directory(smart_dir: str | Path,
                           device_mapping: dict[str, str] | None = None,
-                          ssh_command: Callable | None = None) -> SystemHealth:
+                          ssh_command: Callable | None = None,
+                          auto_discover_devices: bool = False) -> SystemHealth:
     """Analyze all SMART CSV files in a directory.
     
     Args:
@@ -618,6 +659,8 @@ def analyze_smart_directory(smart_dir: str | Path,
         device_mapping: Optional mapping of serial numbers to device paths
                        e.g., {"1RJE48WM": "/dev/sda", ...}
         ssh_command: Optional function to execute commands via SSH for threshold queries
+        auto_discover_devices: If True and ssh_command is provided, automatically
+                              discover device mapping using smartctl --scan
     
     Returns:
         SystemHealth object with all drives and aggregate metrics
@@ -625,6 +668,10 @@ def analyze_smart_directory(smart_dir: str | Path,
     smart_dir = Path(smart_dir)
     if not smart_dir.is_dir():
         raise ValueError(f"Not a directory: {smart_dir}")
+
+    # Auto-discover device mapping if requested
+    if auto_discover_devices and ssh_command and not device_mapping:
+        device_mapping = auto_discover_device_mapping(ssh_command)
 
     # Find all CSV files
     csv_files = list(smart_dir.glob("attrlog.*.csv"))

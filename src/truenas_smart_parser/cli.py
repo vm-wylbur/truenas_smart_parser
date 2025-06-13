@@ -164,36 +164,14 @@ def analyze_remote(
         ssh_exec = ssh_exec_factory(host)
         logger.info(f"Connecting to {host} to analyze {smart_dir}")
 
-        # Load or create device mapping
-        device_mapping = {}
+        # Load device mapping if provided
+        device_mapping = None
         if device_map and device_map.exists():
             logger.info(f"Loading device mapping from {device_map}")
             with open(device_map) as f:
                 device_mapping = json.load(f)
         else:
-            # Automatically scan for device mapping
-            logger.info("No device mapping provided, scanning remote host...")
-            scan_output = ssh_exec("smartctl --scan")
-            
-            for line in scan_output.strip().split('\n'):
-                if not line:
-                    continue
-                
-                parts = line.split()
-                device = parts[0]
-                
-                # Get serial number
-                info = ssh_exec(
-                    f"smartctl -i {device} | grep 'Serial Number' | "
-                    f"awk '{{print $3}}'"
-                )
-                serial = info.strip()
-                
-                if serial:
-                    device_mapping[serial] = device
-                    logger.debug(f"  Found {device}: {serial}")
-            
-            logger.info(f"Auto-discovered {len(device_mapping)} drives")
+            logger.info("No device mapping provided, will auto-discover...")
 
         # Create temporary directory for CSV files
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -245,11 +223,12 @@ def analyze_remote(
                 logger.debug(f"Copied {filename}")
 
             # Now analyze the local copies with SSH threshold queries
-            logger.info(f"Analyzing SMART data with {len(device_mapping)} mapped drives...")
+            logger.info("Analyzing SMART data...")
             system_health = analyze_smart_directory(
                 tmppath,
                 device_mapping=device_mapping,
-                ssh_command=ssh_exec  # Still use SSH for threshold queries
+                ssh_command=ssh_exec,  # Still use SSH for threshold queries
+                auto_discover_devices=(device_mapping is None)
             )
 
             if json_output:
