@@ -27,8 +27,11 @@ uv pip install -e ".[dev]"
 ### Command Line
 
 ```bash
-# Analyze local SMART data
+# Analyze local SMART data (rich tabular display by default)
 truenas-smart-parser analyze /var/lib/smartmontools/
+
+# Analyze remote TrueNAS via SSH
+truenas-smart-parser analyze-remote nas
 
 # Analyze with SSH threshold queries
 truenas-smart-parser analyze /var/lib/smartmontools/ --ssh-host nas
@@ -39,9 +42,15 @@ truenas-smart-parser scan nas -o device_map.json
 # Use device mapping for better output
 truenas-smart-parser analyze /var/lib/smartmontools/ --device-map device_map.json
 
-# Output as JSON
+# Output as JSON instead of tables
 truenas-smart-parser analyze /var/lib/smartmontools/ --json
+truenas-smart-parser analyze-remote nas --json
 ```
+
+The default output uses rich tables with color coding:
+- 🟢 Green: Healthy drives
+- 🟡 Yellow: Warning (high temp or existing errors)
+- 🔴 Red: Critical (critical temp or new errors in 24h)
 
 ### Python API
 

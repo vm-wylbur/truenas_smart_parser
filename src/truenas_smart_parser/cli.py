@@ -27,7 +27,9 @@ from pathlib import Path
 
 import typer
 from loguru import logger
+from rich.console import Console
 
+from .display import display_system_health
 from .parser import analyze_smart_directory
 
 app = typer.Typer()
@@ -95,42 +97,9 @@ def analyze(
             output = system_health.to_dict()
             typer.echo(json.dumps(output, indent=2))
         else:
-            # Human-readable output
-            typer.echo("System Health Summary")
-            typer.echo("=" * 50)
-            typer.echo(f"Total drives: {system_health.total_drives}")
-            typer.echo(f"  ✅ Healthy: {system_health.healthy_drives}")
-            typer.echo(f"  ⚠️  Warning: {system_health.warning_drives}")
-            typer.echo(f"  ❌ Critical: {system_health.critical_drives}")
-            typer.echo()
-            max_temp = system_health.max_temperature
-            typer.echo(f"Max temperature: {max_temp:.1f}°C")
-            typer.echo(f"Total errors (24h): {system_health.total_errors_24h}")
-
-            if system_health.critical_drives > 0:
-                typer.echo()
-                typer.echo("Critical Drives:")
-                for drive in system_health.drives:
-                    temp_check = ""
-                    if (drive.temperature_current and
-                        drive.temperature_critical and
-                        drive.temperature_current >=
-                        drive.temperature_critical):
-                        temp_check = (
-                            f" (≥{drive.temperature_critical}°C threshold)"
-                        )
-
-                    errors = (
-                        drive.reallocated_sectors_24h +
-                        drive.pending_sectors_24h +
-                        drive.media_errors_24h
-                    )
-                    if errors > 0 or temp_check:
-                        typer.echo(
-                            f"  - {drive.device_path} ({drive.serial}): "
-                            f"{drive.temperature_current}°C{temp_check}, "
-                            f"{errors} new errors"
-                        )
+            # Rich tabular display
+            console = Console()
+            display_system_health(system_health, console)
 
     except Exception as e:
         logger.error(f"Analysis failed: {e}")
@@ -231,44 +200,9 @@ def analyze_remote(
                 output = system_health.to_dict()
                 typer.echo(json.dumps(output, indent=2))
             else:
-                # Human-readable output (reuse the same formatting)
-                typer.echo("System Health Summary")
-                typer.echo("=" * 50)
-                typer.echo(f"Total drives: {system_health.total_drives}")
-                typer.echo(f"  ✅ Healthy: {system_health.healthy_drives}")
-                typer.echo(f"  ⚠️  Warning: {system_health.warning_drives}")
-                typer.echo(f"  ❌ Critical: {system_health.critical_drives}")
-                typer.echo()
-                max_temp = system_health.max_temperature
-                typer.echo(f"Max temperature: {max_temp:.1f}°C")
-                typer.echo(
-                    f"Total errors (24h): {system_health.total_errors_24h}"
-                )
-
-                if system_health.critical_drives > 0:
-                    typer.echo()
-                    typer.echo("Critical Drives:")
-                    for drive in system_health.drives:
-                        temp_check = ""
-                        if (drive.temperature_current and
-                            drive.temperature_critical and
-                            drive.temperature_current >=
-                            drive.temperature_critical):
-                            temp_check = (
-                                f" (≥{drive.temperature_critical}°C threshold)"
-                            )
-
-                        errors = (
-                            drive.reallocated_sectors_24h +
-                            drive.pending_sectors_24h +
-                            drive.media_errors_24h
-                        )
-                        if errors > 0 or temp_check:
-                            typer.echo(
-                                f"  - {drive.device_path} ({drive.serial}): "
-                                f"{drive.temperature_current}°C{temp_check}, "
-                                f"{errors} new errors"
-                            )
+                # Rich tabular display
+                console = Console()
+                display_system_health(system_health, console)
 
     except Exception as e:
         logger.error(f"Remote analysis failed: {e}")

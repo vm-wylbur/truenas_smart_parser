@@ -250,11 +250,22 @@ def analyze_ata_health(df: pl.DataFrame, serial: str,
     df_24h = df.filter(pl.col('timestamp') >= cutoff_24h)
 
     # Temperature analysis
-    temp_current = latest.get(f'attr_{ATTR_TEMPERATURE_CELSIUS}_raw')
+    # ATA drives encode temperature in the lower 8 bits of the raw value
+    temp_current_raw = latest.get(f'attr_{ATTR_TEMPERATURE_CELSIUS}_raw')
+    if temp_current_raw is not None:
+        # Extract temperature from lower 8 bits
+        temp_current = temp_current_raw & 0xFF
+    else:
+        temp_current = None
+    
     temp_max_24h = None
     if (not df_24h.is_empty() and
         f'attr_{ATTR_TEMPERATURE_CELSIUS}_raw' in df_24h.columns):
-        temp_max_24h = df_24h[f'attr_{ATTR_TEMPERATURE_CELSIUS}_raw'].max()
+        # Get all temperature values and decode them
+        temp_values = df_24h[f'attr_{ATTR_TEMPERATURE_CELSIUS}_raw'].to_list()
+        decoded_temps = [t & 0xFF for t in temp_values if t is not None]
+        if decoded_temps:
+            temp_max_24h = max(decoded_temps)
 
     # Error analysis - get latest values
     reallocated_total = latest.get(f'attr_{ATTR_REALLOCATED_SECTOR_CT}_raw', 0)
