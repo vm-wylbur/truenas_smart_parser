@@ -1,6 +1,8 @@
+# NOTE: This package is for internal use only and should not be published to PyPI
+
 [project]
 name = "truenas-smart-parser"
-version = "0.1.0"
+version = "0.2.0"
 description = "Parse and analyze SMART data from TrueNAS drives with temperature threshold support"
 readme = "README.md"
 authors = [

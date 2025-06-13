@@ -735,13 +735,30 @@ def analyze_smart_directory(smart_dir: str | Path,
         logger.info("Auto-discovery conditions met, discovering local devices")
         
         def local_exec(command: str) -> str:
-            """Execute command locally"""
-            result = subprocess.run(
-                command.split(),
-                capture_output=True,
-                text=True,
-                check=False
-            )
+            """Execute command locally with sudo for smartctl commands"""
+            # Handle shell commands with pipes by using shell=True
+            if '|' in command and command.startswith('smartctl'):
+                # Add sudo to smartctl commands in shell pipelines
+                command = command.replace('smartctl', 'sudo smartctl', 1)
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    check=False
+                )
+            else:
+                # Handle simple commands without shell
+                cmd_parts = command.split()
+                if cmd_parts[0] == 'smartctl':
+                    cmd_parts = ['sudo'] + cmd_parts
+                
+                result = subprocess.run(
+                    cmd_parts,
+                    capture_output=True,
+                    text=True,
+                    check=False
+                )
             return result.stdout
         
         device_mapping = auto_discover_device_mapping(local_exec)
